@@ -252,13 +252,38 @@
 
 .golf .displayDownArrowAfter h3:after {
     content: ' \2193';
-    color: white;
+    color: #FECD31;
     margin-left: 8px;
 }
 .golf .displayUpArrowAfter h3:after {
     content: ' \2191';
-    color: white;
+    color: #FECD31;
     margin-left: 8px;
+}
+.golf .displayDownArrowAfter h3,
+.golf .displayUpArrowAfter h3 {
+    color: #FECD31 !important;
+}
+
+/* MUI sort label active state — yellow to match Golf Rounds custom headers */
+.sortLabelActive,
+.sortLabelActive:hover,
+.sortLabelActive.Mui-active,
+.sortLabelActive.Mui-active .MuiTableSortLabel-icon {
+    color: #FECD31 !important;
+}
+
+/* Expand-row pattern: kill MUI hover bg on the row, keep cursor pointer,
+   and highlight only the expand icon when hovering the expand TD. */
+.expandRow.MuiTableRow-hover:hover {
+    background-color: transparent !important;
+}
+.expandRow .expandCell {
+    cursor: pointer;
+}
+.expandRow .expandCell:hover .MuiSvgIcon-root,
+.expandRow .expandCell:hover .expandIcon {
+    color: #FECD31 !important;
 }
 
 .golfTable .hideTableBottomBorder  {

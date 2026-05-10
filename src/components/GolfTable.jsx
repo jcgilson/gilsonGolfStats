@@ -1,20 +1,27 @@
+import React from 'react';
 import {
-    Table, TableHead, TableBody, TableRow, TableCell, TextField,
+    Table, TableHead, TableBody, TableRow, TableCell, TextField, IconButton,
 } from '@mui/material';
-import { courses } from '../helpers/GolfConsts'
+import { ExpandMore, ExpandLess } from '@mui/icons-material';
+import { flagImages } from '../helpers/FlagConsts'
 
-const internationalFlag = (round) => {
-    const courseIndex = courses.findIndex(course => course.courseKey === round.roundInfo.courseKey)
-    if (courses[courseIndex].internationalFlag) {
-        return (
-            <div className="marginRightSmall noMarginTop noMarginBottom alignCenter">
-              <img src={courses[courseIndex].internationalFlag} style={{ height: "12px", width: "18px", border: "1px solid white" }} alt={`${courses[courseIndex].internationalFlag} international flag`} />
-            </div>
-        );
-    }
-    
-    return null;
+const internationalFlag = (round, courseInfo) => {
+    const course = courseInfo.find(c => c.courseKey === round.roundInfo.courseKey);
+    const flagSrc = course && course.flagKey ? flagImages[course.flagKey] : null;
+    if (!flagSrc) return null;
+    return (
+        <div className="marginRightSmall noMarginTop noMarginBottom alignCenter">
+            <img src={flagSrc} style={{ height: "12px", width: "18px", border: "1px solid white" }} alt={`${course.flagKey} international flag`} />
+        </div>
+    );
 }
+
+// Memoized per-round expanded-scorecard renderer. Opening one card no longer
+// invalidates every other open card's createScorecard output, because each
+// instance only re-renders when its own round/courseInfo/toggle props change.
+const ExpandedScorecard = React.memo(({ round, courseInfo, expandScorecard, setExpandScorecard, toggleCourseInfo, setToggleCourseInfo, editScorecard, createScorecard }) => {
+    return createScorecard(courseInfo, round, expandScorecard, setExpandScorecard, toggleCourseInfo, setToggleCourseInfo, editScorecard);
+});
 
 const GolfTable = (props) => {
     const {
@@ -97,7 +104,7 @@ const GolfTable = (props) => {
                         <TableCell key={10}><b>{displayedBogeyPlus}</b></TableCell>
                     </TableRow>
                     {activePage === "Golf Rounds" && displayedRounds.map((round, i) => {
-                        let displayRound = (activePage === "Golf Rounds" || activePage === round.roundInfo.course) && (includePartialRounds || (!round.roundInfo.partialFront9 && !round.roundInfo.partialBack9)) && !round.nonGhinRounds.scrambleRound && !round.additionalHoles;
+                        let displayRound = (activePage === "Golf Rounds" || activePage === round.roundInfo.course) && (includePartialRounds || (!round.roundInfo.partialFront9 && !round.roundInfo.partialBack9)) && !round.nonGhinRounds.scrambleRound && !round.additionalHoles && !round.nonGhinRounds.legacyRound;
 
                         if (displayRound) {
                             const roundTotalDisplay = round.nonGhinRounds.scrambleRound ? 
@@ -107,13 +114,17 @@ const GolfTable = (props) => {
                                     null;
                             return (
                                 <>
-                                    <TableRow className={getRoundTableClassName(round, i)} key={i}>
-                                        <TableCell key={`${round.roundInfo.key}1`}><span className={round.scoring.underParRound ? "blackFont" : ""} style={{ textDecoration: "underline"}} onClick={() => handleSetActiveRounds(round.roundInfo.key)}>{activeRounds.includes(round.roundInfo.key) ? "Collapse" : "Scorecard"}</span></TableCell>
+                                    <TableRow className={`${getRoundTableClassName(round, i)} expandRow`} hover key={i}>
+                                        <TableCell key={`${round.roundInfo.key}1`} className="expandCell" onClick={() => handleSetActiveRounds(round.roundInfo.key)}>
+                                            <IconButton size="small" className="expandIcon" sx={{ color: 'inherit' }}>
+                                                {activeRounds.includes(round.roundInfo.key) ? <ExpandLess /> : <ExpandMore />}
+                                            </IconButton>
+                                        </TableCell>
 
                                         <TableCell key={`${round.roundInfo.key}2`}>{round.roundInfo.date}</TableCell>
                                         <TableCell key={`${round.roundInfo.key}3`}>
                                                 <div className="flexRow alignCenter">
-                                                    {internationalFlag(round)}
+                                                    {internationalFlag(round, courseInfo)}
                                                     {round.roundInfo.course}
                                                 </div>
                                         </TableCell>
@@ -125,10 +136,19 @@ const GolfTable = (props) => {
                                         <TableCell key={`${round.roundInfo.key}11`}>{round.scoring.numBirdies + round.scoring.numEagles}{round.scoring.numEagles > 0 ? "*" : null}</TableCell>
                                         <TableCell key={`${round.roundInfo.key}12`}>{round.scoring.numBogeyPlus || <small>-</small>}</TableCell>
                                     </TableRow>
-                                    {(activeRounds.includes(round.roundInfo.key)) && 
+                                    {(activeRounds.includes(round.roundInfo.key)) &&
                                         <TableRow key={`subTable${i}`} className={`hideTableBottomBorderLastChildCell ${activeRounds.includes(round.roundInfo.key) ? " active" : ""}`}>
                                             <TableCell colSpan={"10"}>
-                                                {createScorecard(courseInfo, round, expandScorecard, setExpandScorecard, toggleCourseInfo, setToggleCourseInfo, editScorecard)}
+                                                <ExpandedScorecard
+                                                    round={round}
+                                                    courseInfo={courseInfo}
+                                                    expandScorecard={expandScorecard}
+                                                    setExpandScorecard={setExpandScorecard}
+                                                    toggleCourseInfo={toggleCourseInfo}
+                                                    setToggleCourseInfo={setToggleCourseInfo}
+                                                    editScorecard={editScorecard}
+                                                    createScorecard={createScorecard}
+                                                />
                                             </TableCell>
                                         </TableRow>
                                     }

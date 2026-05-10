@@ -270,11 +270,15 @@ export const golfRoundMetricHelper = (roundData, value, field, hole, allRounds, 
     }
 
     // NON GHIN ROUNDS
-    tempScorecardEntryData.nonGhinRounds = {
-        scrambleRound: tempScorecardEntryData.roundInfo.roundNotes.includes("Scramble") ? true : false,
-        leagueRound: tempScorecardEntryData.roundInfo.roundNotes.includes("League") ? true : false,
-        legacyRound: tempScorecardEntryData.roundInfo.roundNotes.includes("Legacy") ? true : false,
-        boozeRound: tempScorecardEntryData.roundInfo.roundNotes.includes("Booze") ? true : false, // justForFun round
+    // Flags are set explicitly via the "Exclude round" checkbox + reason dropdown in ScorecardEntry,
+    // or carried over from imported rounds. Default to all-false on new rounds.
+    if (!tempScorecardEntryData.nonGhinRounds) {
+        tempScorecardEntryData.nonGhinRounds = {
+            scrambleRound: false,
+            leagueRound: false,
+            legacyRound: false,
+            boozeRound: false,
+        };
     }
 
     return tempScorecardEntryData;

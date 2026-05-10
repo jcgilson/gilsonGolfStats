@@ -70,7 +70,8 @@ const roundSchema = new mongoose.Schema({
   hole15: { type: Object, required: false },
   hole16: { type: Object, required: false },
   hole17: { type: Object, required: false },
-  hole18: { type: Object, required: false }
+  hole18: { type: Object, required: false },
+  additionalHoles: { type: Object, required: false },
   // fullFront9: { type: Boolean, required: false },
   // fullBack9: { type: Boolean, required: false },
   // partialFront9: { type: Boolean, required: false },
@@ -99,5 +100,10 @@ const roundSchema = new mongoose.Schema({
   // dtgF9: {type: Number, required: false },
   // dtgB9: {type: Number, required: false }
 }, { minimize: false, versionKey: false });
+
+// Lookups by these fields are common (round-key match in /updateround,
+// per-course aggregation when building per-course views).
+roundSchema.index({ 'roundInfo.key': 1 });
+roundSchema.index({ 'roundInfo.courseKey': 1 });
 
 export default mongoose.model('golfrounds', roundSchema);

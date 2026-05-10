@@ -1,17 +1,18 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 // Components
 import GolfUploadButton from '../components/GolfUploadButton';
 import GolfTable from '../components/GolfTable';
 import PageLinks from '../components/PageLinks';
 import ScorecardEntry from '../components/ScorecardEntry';
 import ScorecardHelpModal from '../components/ScorecardHelpModal';
+import CoursesPage from '../components/CoursesPage';
+import LegacyRoundsTable from '../components/LegacyRoundsTable';
 // MUI
 import {
     TableBody, TableRow, TableCell, FormControl, CircularProgress, InputLabel, MenuItem, Select,
-    ListItemText, Checkbox, Modal, Paper, Card, CardContent, Snackbar
+    ListItemText, Checkbox, Modal, Card, CardContent, Snackbar
 } from '@mui/material';
 import { SelectChangeEvent } from '@mui/material/Select';
-import { Close } from '@mui/icons-material';
 // Tools
 import "react-datepicker/dist/react-datepicker.css";
 import axios from 'axios';
@@ -21,8 +22,9 @@ import "../shared.css"
 import { golfRoundMetricHelper } from "../helpers/GolfRoundMetricHelper";
 import { importFile } from "../helpers/ImportFileHelper";
 import { createScorecard, calculateStats, courseSummary } from "../helpers/GolfFormatHelper";
-import { courses } from "../helpers/GolfConsts";
-const Excel = require('exceljs');
+
+const currentYear = new Date().getFullYear();
+const API_URL = process.env.REACT_APP_API_URL || 'https://worldofjack-server.onrender.com';
 
 const Golf = () => {
 
@@ -42,11 +44,11 @@ const Golf = () => {
 
     //  Configurable state
     const [activePage, setActivePage] = useState("Golf Rounds");
-    const [yearFilter, setYearFilter] = useState(2025); // Can set default year here
+    const [yearFilter, setYearFilter] = useState(currentYear);
 
     // Internal state
     const [displayUploadButton, setDisplayUploadButton] = useState(true);
-    const [filters, setFilters] = useState(["2025"]);
+    const [filters, setFilters] = useState([String(currentYear)]);
     const [courseTours, setCourseTours] = useState(["CommonGround"]); // "Course Tour" tab shows "hole course by default"
     const [isLoading, setIsLoading] = useState(false);
     const [allRounds, setAllRounds] = useState([]);
@@ -67,7 +69,6 @@ const Golf = () => {
     const [handicapMetrics, setHandicapMetrics] = useState({});
     const [displayedRoundsToggle, setDisplayedRoundsToggle] = useState(false);
     const [approachView, setApproachView] = useState("distribution");
-    const [displayLegacyFilterWarning, setDisplayLegacyFilterWarning] = useState(false);
     const [handicapCutoffRoundKey, setHandicapCutoffRoundKey] = useState("");
     const [filterableCourses, setFilterableCourses] = useState(['CommonGround']);
     const [editingExistingScorecard, setEditingExistingScorecard] = useState(false);
@@ -88,23 +89,63 @@ const Golf = () => {
     const [displayScorecard9HoleRemovalModal, setDisplayScorecard9HoleRemovalModal] = useState(false);
     const [displayNumberHolesRemovedWarningSnackbar, setDisplayNumberHolesRemovedWarningSnackbar] = useState(false);
     const [displayScorecardSubmissionSnackbar, setDisplayScorecardSubmissionSnackbar] = useState(false);
+    const [displayDeleteConfirmModal, setDisplayDeleteConfirmModal] = useState(false);
     const [fileUploadComplete, setFileUploadComplete] = useState(false);
 
     const pinnedCourse = "South Suburban"; // Course pinned atop scorecard entry
     const includePartialRounds = true; // Displays partial rounds
 
     /**
+     * HOOK: useEffect fetches rounds + course info from the API on mount.
+     * On success, the Excel upload button is hidden. On failure, falls back
+     * to showing the upload button so the user can still bootstrap from Excel.
+     */
+    useEffect(() => {
+        setIsLoading(true);
+        Promise.all([
+            axios.get(`${API_URL}/golfrounds`),
+            axios.get(`${API_URL}/courseinfo`)
+        ])
+        .then(([roundsRes, courseRes]) => {
+            setCourseInfo(courseRes.data);
+            setDisplayedRounds(roundsRes.data);
+            setAllRounds(roundsRes.data);
+            setDisplayUploadButton(false);
+        })
+        .catch((err) => {
+            console.error('Failed to fetch from API; falling back to Excel upload:', err.message);
+            setIsLoading(false);
+        });
+    }, []);
+
+    // Refresh just the courseInfo collection from Mongo. Called after the user
+    // creates a new course via the Courses page so the dropdown picks it up
+    // without a full page reload.
+    const refreshCourseInfo = useCallback(async () => {
+        try {
+            const res = await axios.get(`${API_URL}/courseinfo`);
+            setCourseInfo(res.data);
+        } catch (err) {
+            console.error('Failed to refresh courseInfo:', err.message);
+        }
+    }, []);
+
+    /**
      * HOOK: useEffect sets filter method when round data is fetched or a new round is added
-     * 
-     * 
+     *
+     *
      */
     useEffect(() => {
         changeSortMethod("sequence", "roundInfo");
         setIsLoading(false);
 
-        // Set available round years (used for Annual Summaries)
+        // Set available round years (used for Annual Summaries). Legacy rounds
+        // are intentionally excluded from this dropdown — only years where full
+        // detailed-stat data was tracked should appear as filter options.
         let tempRoundYears = [];
         for (let round of allRounds) {
+            if (round.nonGhinRounds?.legacyRound) continue;
+            if (!round.roundInfo?.date) continue;
             let splitRoundDate = round.roundInfo.date.split("/");
             let roundYear = splitRoundDate[2];
             if (!tempRoundYears.includes(roundYear)) tempRoundYears.push(roundYear);
@@ -273,7 +314,10 @@ const Golf = () => {
      * TODO: fill out rest of this documentation, and this needs to actually filter data
      */
     useEffect(() => {
-        let tempRounds = allRounds;
+        // Strip legacy rounds out of every flow downstream of allRounds — they
+        // surface only on the dedicated Legacy Rounds tab. This keeps date-driven
+        // helpers (which assume MM/DD/YY strings) from crashing on null dates.
+        let tempRounds = allRounds.filter(r => !r.nonGhinRounds?.legacyRound);
         if (tempRounds.length > 0) {
             if (filters.includes(mostRecentRoundYear) && !filters.includes("All Years")) {
                 tempRounds = tempRounds.filter(round => round.roundInfo.date && round.roundInfo.date.substring(round.roundInfo.date.length - 1, round.roundInfo.date.length) === mostRecentRoundYear.substring(mostRecentRoundYear.length - 1, mostRecentRoundYear));
@@ -306,6 +350,7 @@ const Golf = () => {
         if (filterYear >= 2022 && filterYear < 2100 && filterYear !== yearFilter) {
             let newRounds = [];
             for (let round of allRounds) {
+                if (!round.roundInfo?.date) continue; // legacy / undated rounds excluded from year filter
                 const yearSuffix = round.roundInfo.date.split("/")[2]
                 if ((2000 + parseInt(yearSuffix)) == filterYear) {
                     newRounds.push(round);
@@ -350,7 +395,7 @@ const Golf = () => {
         importFile(
             e.target.files[0],
             setIsLoading,
-            courses,
+            courseInfo,
             yearFilter,
             setRoundYears,
             setHandicapCutoffRoundKey,
@@ -397,15 +442,19 @@ const Golf = () => {
                 newSortOrder = "ascending";
             }
         }
-        let sortableRounds = displayedRounds.filter(round => !round.nonGhinRounds.legacyRound);
+        const sortableRounds = [...displayedRounds];
 
-        if (displayedRounds.length !== sortableRounds.length) {
-            setDisplayLegacyFilterWarning(true);
-        }
-        
+        // GIR sort matches what's displayed in the column: g (in regulation) + gur (G-1).
+        const getSortValue = (r) => {
+            if (readingObjectPath === 'greens' && method === 'g') {
+                return (r.greens?.g ?? 0) + (r.greens?.gur ?? 0);
+            }
+            return r[readingObjectPath]?.[method];
+        };
+
         const sortedRounds = newSortOrder === "ascending" ?
-            sortableRounds.sort(function(a,b) { return (a[readingObjectPath][method] < b[readingObjectPath][method]) ? 1 : ((b[readingObjectPath][method] < a[readingObjectPath][method]) ? -1 : 0); }) :
-            sortableRounds.sort(function(a,b) { return (a[readingObjectPath][method] < b[readingObjectPath][method]) ? -1 : ((b[readingObjectPath][method] < a[readingObjectPath][method]) ? 1 : 0);} )
+            sortableRounds.sort(function(a,b) { const av = getSortValue(a), bv = getSortValue(b); return (av < bv) ? 1 : ((bv < av) ? -1 : 0); }) :
+            sortableRounds.sort(function(a,b) { const av = getSortValue(a), bv = getSortValue(b); return (av < bv) ? -1 : ((bv < av) ? 1 : 0); });
 
         setTableSort({ method, order: newSortOrder });
         setDisplayedRounds(sortedRounds);
@@ -443,6 +492,51 @@ const Golf = () => {
         }
     }
 
+    const setPlayingPartners = (partners) => {
+        setScorecardEntryData({
+            ...scorecardEntryData,
+            roundInfo: {
+                ...(scorecardEntryData.roundInfo || {}),
+                playingPartners: partners,
+            }
+        });
+    };
+
+    const setExcludeRound = (excluded, reason) => {
+        const nonGhinRounds = {
+            boozeRound:    excluded && reason === "boozeRound",
+            scrambleRound: excluded && reason === "scrambleRound",
+            leagueRound:   excluded && reason === "leagueRound",
+            legacyRound:   scorecardEntryData?.nonGhinRounds?.legacyRound || false,
+        };
+        let temp = { ...scorecardEntryData, nonGhinRounds };
+        temp = golfRoundMetricHelper(temp, null, null, null, allRounds, editingExistingScorecard, activeScorecardEntryCourseInfo);
+        setScorecardEntryData(temp);
+    };
+
+    const deleteScorecard = () => {
+        const key = scorecardEntryData?.roundInfo?.key;
+        if (!key) {
+            setDisplayDeleteConfirmModal(false);
+            return;
+        }
+        axios.delete(`${API_URL}/round/${encodeURIComponent(key)}`)
+            .then(() => {
+                setAllRounds(allRounds.filter(r => r.roundInfo.key !== key));
+                setDisplayedRounds(displayedRounds.filter(r => r.roundInfo.key !== key));
+                setScorecardEntryData({});
+                setEditingExistingScorecard(false);
+                setDisplayDeleteConfirmModal(false);
+                setActivePage("Golf Rounds");
+                setDisplayScorecardSubmissionSnackbar("delete-success");
+            })
+            .catch((err) => {
+                setDisplayDeleteConfirmModal(false);
+                setDisplayScorecardSubmissionSnackbar("delete-error");
+                console.error('Error deleting round', err);
+            });
+    };
+
     const validateScorecard = (editingExistingScorecard) => {
         const isValid = true;
 
@@ -463,13 +557,23 @@ const Golf = () => {
             }
         }
 
+        // Strip empty playing-partner slots so only filled names persist
+        if (tempScorecardEntryData.roundInfo?.playingPartners) {
+            tempScorecardEntryData.roundInfo = {
+                ...tempScorecardEntryData.roundInfo,
+                playingPartners: tempScorecardEntryData.roundInfo.playingPartners
+                    .map(p => (p || '').trim())
+                    .filter(Boolean),
+            };
+        }
+
         setScorecardEntryData({});
         handleActivePageChange();
 
         if (editingExistingScorecard) {
             setEditingExistingScorecard(false);
             // Update existing round in Mongo
-            axios.put('https://worldofjack-server.onrender.com/updateround', tempScorecardEntryData)
+            axios.put(`${API_URL}/updateround`, tempScorecardEntryData)
             .then(() => {
                 setDisplayScorecardSubmissionSnackbar("success")
             })
@@ -488,7 +592,7 @@ const Golf = () => {
             setDisplayedRounds(tempDisplayedRounds)
         } else {
             // Save new round to Mongo
-            axios.post('https://worldofjack-server.onrender.com/add-round', tempScorecardEntryData)
+            axios.post(`${API_URL}/add-round`, tempScorecardEntryData)
             .then(() => {
                 setDisplayScorecardSubmissionSnackbar("success")
             })
@@ -507,32 +611,61 @@ const Golf = () => {
     }
 
     const filterOptions = [];
-    const roundsSortedByDate = allRounds.length > 0 ? allRounds.sort(function(a, b){
-        const aDate = a.roundInfo.date.split('/');
-        const aYear = parseInt(aDate[2]);
-        const aMonth = parseInt(aDate[0]);
-        const aDay = parseInt(aDate[1]);
+    // O(n log n) date sort across allRounds — only redo when allRounds itself changes.
+    // Legacy rounds with null dates are excluded so this can be used for "most recent
+    // round" / year-filter UI without crashing.
+    const roundsSortedByDate = useMemo(() => {
+        if (allRounds.length === 0) return null;
+        const datable = allRounds.filter(r => r.roundInfo?.date && !r.nonGhinRounds?.legacyRound);
+        return datable.sort(function(a, b){
+            const aDate = a.roundInfo.date.split('/');
+            const aYear = parseInt(aDate[2]);
+            const aMonth = parseInt(aDate[0]);
+            const aDay = parseInt(aDate[1]);
 
-        const bDate = b.roundInfo.date.split('/');
-        const bYear = parseInt(bDate[2]);
-        const bMonth = parseInt(bDate[0]);
-        const bDay = parseInt(bDate[1]);
+            const bDate = b.roundInfo.date.split('/');
+            const bYear = parseInt(bDate[2]);
+            const bMonth = parseInt(bDate[0]);
+            const bDay = parseInt(bDate[1]);
 
-        let order = 0;
-        if (aYear > bYear) {
-            order = -1;
-        } else if (aYear === bYear) {
-            if (aMonth > bMonth) {
+            let order = 0;
+            if (aYear > bYear) {
                 order = -1;
-            } else if (aMonth === bMonth) {
-                if (aDay > bDay) {
+            } else if (aYear === bYear) {
+                if (aMonth > bMonth) {
                     order = -1;
+                } else if (aMonth === bMonth) {
+                    if (aDay > bDay) {
+                        order = -1;
+                    }
                 }
             }
-        }
+            return order;
+        });
+    }, [allRounds]);
 
-        return order
-    }) : null;
+    // Heavy aggregations — only re-run when their data inputs change.
+    // Skip when data hasn't loaded yet (initial puttingData is `{}`, allRounds is `[]`),
+    // otherwise the helpers iterate empty/wrong shapes and throw.
+    // Setter functions from useState are stable across renders, so they're
+    // intentionally omitted from the dep arrays.
+    const dataLoaded = allRounds.length > 0 && Array.isArray(puttingData);
+    // Defer the heavy aggregations until the user is actually viewing the
+    // tab that needs them. calculateStats walks 9 sub-helpers across all rounds;
+    // computing it eagerly stalls the Golf Rounds tab too.
+    const statsView = useMemo(
+        () => (dataLoaded && activePage === "Metrics")
+            ? calculateStats(courseInfo, allRounds, puttingData, displayedRounds, handicap, displayedRoundsToggle, setDisplayedRoundsToggle, approachView, setApproachView)
+            : null,
+        [dataLoaded, activePage, courseInfo, allRounds, puttingData, displayedRounds, handicap, displayedRoundsToggle, approachView]
+    );
+
+    const courseSummaryView = useMemo(
+        () => (dataLoaded && activePage === "Course Tour")
+            ? courseSummary(courseInfo, allRounds, expandSingleHoleMetric, handleSetExpandSingleHoleMetric, courseTours, displayedRounds, displayedRoundsToggle, setDisplayedRoundsToggle)
+            : null,
+        [dataLoaded, activePage, courseInfo, allRounds, expandSingleHoleMetric, handleSetExpandSingleHoleMetric, courseTours, displayedRounds, displayedRoundsToggle]
+    );
 
     const mostRecentRoundDate = allRounds.length > 0 ? roundsSortedByDate[0].roundInfo.date.split("/") : [];
     const mostRecentRoundYear = `20${mostRecentRoundDate[2]}`;
@@ -581,13 +714,13 @@ const Golf = () => {
         setCourseTours(value);
     };
 
-    let getRoundTableClassName = (round, i) => {
+    const getRoundTableClassName = useCallback((round, i) => {
         let className = "hideTableBottomBorderLastChildCell";
         if (round.scoring.underParRound) className += " backgroundColorEagleRow";
         if (activeRounds.includes(round.roundInfo.key)) className += " hideBorderBottom";
         if ((tableSort.method === 'sequence' && tableSort.order === 'descending') && (displayedRounds.length > 20) && (round.roundInfo.key === handicapCutoffRoundKey)) className += " handicapCutoffRoundBottomBorder";
         return className;
-    }
+    }, [activeRounds, tableSort, displayedRounds.length, handicapCutoffRoundKey]);
 
     const getAnnualSummaryRows = () => {
         let tempSummaries = []
@@ -611,6 +744,7 @@ const Golf = () => {
             });
         }
         allRounds.forEach((round) => {
+            if (round.nonGhinRounds?.legacyRound || !round.roundInfo?.date) return;
             const roundYear = round.roundInfo.date.split("/");
             if (round.roundInfo.fullFront9 && round.roundInfo.fullBack9 && !round.nonGhinRounds.boozeRound && !round.nonGhinRounds.scrambleRound) {
                 const year = tempSummaries.findIndex(summaryYear => summaryYear.year === roundYear[2]);
@@ -716,16 +850,6 @@ const Golf = () => {
                 />
             }
 
-            {displayLegacyFilterWarning &&
-                <Paper className="flexRow justifySpaceBetween alignCenter marginTopMedium" style={{width: "75vw", padding: "8px 12px"}}>
-                    <div className="flexColumn">
-                        <b className="blackFont">Warning</b>
-                        <span className="blackFont">Legacy rounds have been omitted from filtered results</span>
-                    </div>
-                    <Close className="blackFont" onClick={() => setDisplayLegacyFilterWarning(false)}/>
-                </Paper>
-            }
-
             {/*
                 COMPONENT: Golf Table
 
@@ -773,15 +897,15 @@ const Golf = () => {
             {/* Metrics */}
             {!displayUploadButton && activePage === "Metrics" &&
                 <div className="marginTopMedium" style={{ maxWidth: "90vw", marginLeft: "5vw" }}>
-                    {calculateStats(courseInfo, allRounds, puttingData, displayedRounds, handicap, displayedRoundsToggle, setDisplayedRoundsToggle, approachView, setApproachView)}
-                </div>        
+                    {statsView}
+                </div>
             }
 
             {/* Course Tour */}
             {!displayUploadButton && activePage === "Course Tour" &&
                 <div className="flexColumn marginTopMedium">
                     {/* Each hole summary, best score */}
-                    {courseSummary(courseInfo, allRounds, expandSingleHoleMetric, handleSetExpandSingleHoleMetric, courseTours, displayedRounds, displayedRoundsToggle, setDisplayedRoundsToggle)}
+                    {courseSummaryView}
                     {/* YouTube tour */}
                 </div>
             }
@@ -791,7 +915,7 @@ const Golf = () => {
                     activeScorecardEntry={activeScorecardEntry}
                     activeScorecardEntryCourseInfo={activeScorecardEntryCourseInfo}
                     setActiveScorecardEntry={setActiveScorecardEntry}
-                    courses={courses}
+                    courseInfo={courseInfo}
                     pinnedCourse={pinnedCourse}
                     scorecardEntryData={scorecardEntryData}
                     updateScorecardEntryData={updateScorecardEntryData}
@@ -804,10 +928,22 @@ const Golf = () => {
                     setDisplayHelpModal={setDisplayHelpModal}
                     validateScorecard={validateScorecard}
                     editingExistingScorecard={editingExistingScorecard}
+                    onDeleteScorecard={() => setDisplayDeleteConfirmModal(true)}
+                    setExcludeRound={setExcludeRound}
+                    setPlayingPartners={setPlayingPartners}
                 />
             }
 
-            {/* 
+            {!displayUploadButton && activePage === "Courses" &&
+                <CoursesPage
+                    courseInfo={courseInfo}
+                    allRounds={allRounds}
+                    apiUrl={API_URL}
+                    onRefreshCourseInfo={refreshCourseInfo}
+                />
+            }
+
+            {/*
                 COMPONENT: Help modal displayed when entering scorecard
             */}
             {
@@ -854,25 +990,43 @@ const Golf = () => {
             />
 
             <Snackbar
-                open={["success", "error"].includes(displayScorecardSubmissionSnackbar)}
+                open={["success", "error", "delete-success", "delete-error"].includes(displayScorecardSubmissionSnackbar)}
                 autoHideDuration={6000}
                 onClose={() => setDisplayScorecardSubmissionSnackbar(null)}
-                message={displayScorecardSubmissionSnackbar === "success" ? "Scorecard saved" : "Error saving scorecard. See console for more details"}
+                message={
+                    displayScorecardSubmissionSnackbar === "success" ? "Scorecard saved" :
+                    displayScorecardSubmissionSnackbar === "delete-success" ? "Round deleted" :
+                    displayScorecardSubmissionSnackbar === "delete-error" ? "Error deleting round. See console for more details" :
+                    "Error saving scorecard. See console for more details"
+                }
             />
+
+            {/* Confirm-delete modal */}
+            <Modal
+                open={displayDeleteConfirmModal}
+                style={{width: "100%", margin: "auto"}}
+            >
+                <div className="backgroundColorWhite margin0Auto paddingLargeMedium" style={{maxWidth: "360px", marginTop: "30vh", padding: "16px", borderRadius: "8px"}}>
+                    <h3 className="strongFont blackFont marginBottomSmall">Delete this round?</h3>
+                    <p className="blackFont marginBottomMedium">
+                        {scorecardEntryData?.roundInfo?.course} on {scorecardEntryData?.roundInfo?.date}.
+                        This permanently removes it from staging — you cannot undo it.
+                    </p>
+                    <div className="flexRow justifyEnd">
+                        <button onClick={() => setDisplayDeleteConfirmModal(false)} className="marginRightMedium">Cancel</button>
+                        <button onClick={deleteScorecard} style={{backgroundColor: "var(--color-flag-red)", color: "white"}}>Delete</button>
+                    </div>
+                </div>
+            </Modal>
 
 
             {/*
-                Historic Rounds 
-                Summary of all years prior to keeping detailed metrics
+                Legacy Rounds — pre-detailed-stats rounds. Stored in the same
+                golfrounds collection but flagged via nonGhinRounds.legacyRound
+                so they're hidden from every other view that operates on rounds.
             */}
-            {!displayUploadButton && activePage === "Historic Rounds" &&
-                <div className="">
-                    <Card sx={{ minWidth: 275 }}>
-                        <CardContent>
-                            <h1>hello</h1>
-                        </CardContent>
-                    </Card>
-                </div>
+            {!displayUploadButton && activePage === "Legacy Rounds" &&
+                <LegacyRoundsTable allRounds={allRounds} />
             }
 
             {/*

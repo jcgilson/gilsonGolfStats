@@ -10,7 +10,6 @@ import {
 } from './GolfMetricHelper';
 // Consts
 import { imageSourceMappings } from "./GolfConsts";
-import { courses } from "./GolfConsts";
 import ScorecardFooter from "../components/ScorecardFooter";
 // Components
 
@@ -381,7 +380,7 @@ export const createNetRow = (activeRound, course) => {
     let netRow = [];
     for (let hole = 1; hole <= 18; hole++) {
         if (activeRound[`hole${hole}`]) {
-            let backgroundColorClassName = "paddingTopSmall paddingLeftSmall paddingRightSmall paddingBottomSmall borderRadiusSmall";
+            let backgroundColorClassName = "scorecardHighlightPadding borderRadiusSmall";
             if (activeRound[`hole${hole}`].netScore > course[`hole${hole}`].par + 1) backgroundColorClassName += " backgroundColorBogeyPlus";
             if (activeRound[`hole${hole}`].netScore === course[`hole${hole}`].par + 1) backgroundColorClassName += " backgroundColorBogey";
             if (activeRound[`hole${hole}`].netScore === course[`hole${hole}`].par - 1) backgroundColorClassName += " backgroundColorBirdie";
@@ -1144,7 +1143,7 @@ const createCumulativeGraphs = (displayedRounds, drivingMetrics, puttingMetrics)
             "Handicap"
         ]
     ];
-    const sortedDisplayedRounds = displayedRounds.sort(function (a, b) {
+    const sortedDisplayedRounds = [...displayedRounds].sort(function (a, b) {
         a = a.roundInfo.date.split('/');
         b = b.roundInfo.date.split('/');
         return a[2] - b[2] || a[0] - b[0] || a[1] - b[1];
@@ -1324,7 +1323,7 @@ const calculateCourseRecords = (courseInfo, courseMetrics) => {
 
     Object.keys(courseMetrics).forEach(courseMetric => {
         const singleCourseInfo = courseInfo.find(info => info.courseKey === courseMetric)
-            const courseName = courses.find(course => course.courseKey === courseMetric).displayName;
+            const courseName = singleCourseInfo.displayName;
             let f9String = courseMetrics[courseMetric].out === 100 ? "-" : `${courseMetrics[courseMetric].out} (${courseMetrics[courseMetric].out - singleCourseInfo.f9Par > 0 ? "+" : courseMetrics[courseMetric].out == singleCourseInfo.f9Par ? "E" : ""}${courseMetrics[courseMetric].out !== singleCourseInfo.f9Par ? courseMetrics[courseMetric].out - singleCourseInfo.f9Par : ""})`;
             let b9String = courseMetrics[courseMetric].in === 100 ? "-" : `${courseMetrics[courseMetric].in} (${courseMetrics[courseMetric].in - singleCourseInfo.b9Par > 0 ? "+" : courseMetrics[courseMetric].in == singleCourseInfo.b9Par ? "E" : ""}${courseMetrics[courseMetric].in !== singleCourseInfo.b9Par ? courseMetrics[courseMetric].in - singleCourseInfo.b9Par : ""})`;
 

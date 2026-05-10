@@ -5,12 +5,30 @@ import {
     calculateDthAndDtgTotals,
 
 } from "./GolfFormatHelper";
-const Excel = require('exceljs');
+import { parseLegacyRounds } from "./parseLegacyRounds";
+
+// Derive a camelCase courseKey from a displayName when no existing courseInfo
+// doc has that name (i.e. a brand-new sheet was added to the workbook).
+const deriveCourseKey = (displayName, takenKeys) => {
+    const words = displayName
+        .replace(/[^A-Za-z0-9 ]+/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+    let base = words.map((w, i) =>
+        i === 0
+            ? w.charAt(0).toLowerCase() + w.slice(1)
+            : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    ).join('') || 'course';
+    let key = base;
+    let n = 1;
+    while (takenKeys.has(key)) { n++; key = `${base}${n}`; }
+    return key;
+};
 
 export const importFile = (
     file,
     setIsLoading,
-    courses,
+    courseInfo,
     yearFilter,
     setRoundYears,
     setHandicapCutoffRoundKey,
@@ -34,22 +52,47 @@ export const importFile = (
         }
     }
 
-    const excel = new Excel.Workbook();
     const reader = new FileReader();
 
     reader.readAsArrayBuffer(file);
-    reader.onload = () => {
+    reader.onload = async () => {
         const buffer = reader.result;
+        // exceljs is ~700KB; load on demand only when the user uploads
+        const ExcelMod = await import('exceljs');
+        const Excel = ExcelMod.default ?? ExcelMod;
+        const excel = new Excel.Workbook();
         excel.xlsx.load(buffer)
             .then(wkbk => {
                 let courseData = {};
                 let workSheets = {};
+                // Build the list of courses to iterate by walking the workbook's sheets
+                // directly, skipping the "Legacy Rounds" tab. Match each sheet name to
+                // an existing courseInfo doc (by displayName) so we inherit its courseKey
+                // and metadata; if a sheet has no match yet, derive a fresh courseKey.
+                const takenKeys = new Set(courseInfo.map(c => c.courseKey));
+                const existingByName = new Map(courseInfo.map(c => [c.displayName, c]));
+                const courses = [];
+                for (const ws of wkbk.worksheets) {
+                    if (ws.name === 'Legacy Rounds') continue;
+                    const existing = existingByName.get(ws.name);
+                    let courseKey, scoreCardHoleAbbreviation, sequence, flagKey;
+                    if (existing) {
+                        courseKey = existing.courseKey;
+                        scoreCardHoleAbbreviation = existing.scoreCardHoleAbbreviation ?? '';
+                        sequence = existing.sequence;
+                        flagKey = existing.flagKey ?? null;
+                    } else {
+                        courseKey = deriveCourseKey(ws.name, takenKeys);
+                        takenKeys.add(courseKey);
+                        scoreCardHoleAbbreviation = '';
+                        sequence = courseInfo.length + courses.length + 1;
+                        flagKey = null;
+                    }
+                    courses.push({ displayName: ws.name, courseKey, scoreCardHoleAbbreviation, sequence, flagKey });
+                }
+
                 for (let course of courses) {
                     workSheets[course.courseKey] = wkbk.getWorksheet(course.displayName);
-                    if (!workSheets[course.courseKey]) {
-                        console.log("Course name does not match worksheet:", course.displayName);
-                        return;
-                    }
                     const workSheetData = workSheets[course.courseKey].getRow(2).values;
                     courseData[course.courseKey] = {};
                     courseData[course.courseKey].displayName = course.displayName;
@@ -330,7 +373,7 @@ export const importFile = (
                                         roundData.additionalHoles[`additionalHole${holeCount}`] = {
                                             course: row[columnCount],
                                             courseKey: course.courseKey,
-                                            scoreCardHoleAbbreviation: courses.filter(course => course.displayName === row[columnCount]).scoreCardHoleAbbreviation,
+                                            scoreCardHoleAbbreviation: courses.find(c => c.displayName === row[columnCount])?.scoreCardHoleAbbreviation ?? '',
                                             hole: row[columnCount + 1],
                                             score: parseInt(row[columnCount + 2]),
                                             putts: parseInt(row[columnCount + 3]),
@@ -471,16 +514,26 @@ export const importFile = (
                     if (handicapRoundKeys.includes(round.roundInfo.key)) round.handicapRound = true;
                 }
 
-                // Format Excel worksheet data into Array of Objects
+                // Format Excel worksheet data into Array of Objects, preserving the
+                // sequence / scoreCardHoleAbbreviation / flagKey metadata we resolved
+                // up-front (it isn't carried in the Excel sheet itself).
+                const courseByKey = new Map(courses.map(c => [c.courseKey, c]));
                 const courseDataArray = [];
-                for (let course of Object.keys(courseData)) {
-                    courseDataArray.push({...courseData[course], courseKey: course})
+                for (const courseKey of Object.keys(courseData)) {
+                    const meta = courseByKey.get(courseKey) || {};
+                    courseDataArray.push({ ...meta, ...courseData[courseKey], courseKey });
                 }
                 setCourseInfo(courseDataArray);
-                
+
                 setPuttingData(allPutts);
-                
-                setAllRounds(allRounds);
+
+                // Append parsed legacy rounds AFTER the modern sort/sequence/handicap
+                // pipeline so they don't pollute any of those calculations. They live
+                // alongside modern rounds in allRounds, marked via nonGhinRounds.legacyRound.
+                const legacySheet = wkbk.getWorksheet('Legacy Rounds');
+                const legacyRounds = parseLegacyRounds(legacySheet);
+                const combinedRounds = legacyRounds.length ? [...allRounds, ...legacyRounds] : allRounds;
+                setAllRounds(combinedRounds);
                 setDisplayedRounds(displayedRounds);
                 handleUpdateSummaryRow(displayedRounds)
                 setTableSort({ method: 'sequence', order: 'descending' });

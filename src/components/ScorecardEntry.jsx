@@ -1,5 +1,6 @@
 import {
-    Table, TableHead, TableBody, FormControl, TextField, InputLabel, MenuItem, Select, Autocomplete
+    Table, TableHead, TableBody, FormControl, TextField, InputLabel, MenuItem, Select, Autocomplete,
+    Checkbox, FormControlLabel
 } from '@mui/material';
 import DatePicker from "react-datepicker";
 import { PushPin } from '@mui/icons-material';
@@ -11,7 +12,7 @@ const ScorecardEntry = (props) => {
         activeScorecardEntry,
         setActiveScorecardEntry,
         activeScorecardEntryCourseInfo,
-        courses,
+        courseInfo,
         pinnedCourse,
         scorecardEntryData,
         updateScorecardEntryData,
@@ -24,7 +25,30 @@ const ScorecardEntry = (props) => {
         setDisplayHelpModal,
         validateScorecard,
         editingExistingScorecard,
+        onDeleteScorecard,
+        setExcludeRound,
+        setPlayingPartners,
     } = props;
+
+    const ngr = scorecardEntryData?.nonGhinRounds;
+    const isExcluded = !!(ngr && (ngr.boozeRound || ngr.scrambleRound || ngr.leagueRound));
+    const currentReason =
+        ngr?.boozeRound ? "boozeRound" :
+        ngr?.scrambleRound ? "scrambleRound" :
+        ngr?.leagueRound ? "leagueRound" :
+        "boozeRound";
+
+    const storedPartners = scorecardEntryData?.roundInfo?.playingPartners ?? [];
+    const minPartnerSlots = 3;
+    const displayedPartners = storedPartners.length >= minPartnerSlots
+        ? storedPartners
+        : [...storedPartners, ...Array(minPartnerSlots - storedPartners.length).fill("")];
+
+    const updatePartnerAt = (idx, value) => {
+        const next = [...displayedPartners];
+        next[idx] = value;
+        setPlayingPartners(next);
+    };
 
     return (
         <>
@@ -40,8 +64,8 @@ const ScorecardEntry = (props) => {
                             onChange={(e) => setActiveScorecardEntry(e.target.value)}
                             style={{width: "300px"}}
                         >
-                            {/* Sort by display name */}
-                            {courses.sort((a,b) => ((a.displayName === pinnedCourse) ? -1 : (b.displayName === pinnedCourse) ? 1 : (a.displayName > b.displayName) ? 1 : -1)).map(course => {
+                            {/* Sort by display name (pinned course first) */}
+                            {[...courseInfo].sort((a,b) => ((a.displayName === pinnedCourse) ? -1 : (b.displayName === pinnedCourse) ? 1 : (a.displayName > b.displayName) ? 1 : -1)).map(course => {
                                 return (
                                     <MenuItem className="width100Percent flexRow justifySpaceBetween" value={course.courseKey} key={course.courseKey}>
                                         <span>{course.displayName}</span>
@@ -78,6 +102,34 @@ const ScorecardEntry = (props) => {
                                 updateScorecardEntryData(e.target.value, "roundNotes", "roundInfo")
                             }}
                         />
+                    </div>
+                }
+
+                {/* Exclude-round controls */}
+                {activeScorecardEntry &&
+                    <div className="flexRow alignCenter">
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={isExcluded}
+                                    onChange={(e) => setExcludeRound(e.target.checked, currentReason)}
+                                />
+                            }
+                            label="Exclude round"
+                        />
+                        {isExcluded &&
+                            <FormControl variant="standard" sx={{ minWidth: 140 }}>
+                                <InputLabel>Reason</InputLabel>
+                                <Select
+                                    value={currentReason}
+                                    onChange={(e) => setExcludeRound(true, e.target.value)}
+                                >
+                                    <MenuItem value="boozeRound">Booze</MenuItem>
+                                    <MenuItem value="scrambleRound">Scramble</MenuItem>
+                                    <MenuItem value="leagueRound">League</MenuItem>
+                                </Select>
+                            </FormControl>
+                        }
                     </div>
                 }
 
@@ -171,6 +223,23 @@ const ScorecardEntry = (props) => {
                 }
             </div>
 
+            {/* Playing partners */}
+            {activeScorecardEntry &&
+                <div className="width90Percent flexRow alignCenter marginBottomMedium" style={{gap: "12px", flexWrap: "wrap"}}>
+                    {displayedPartners.map((partner, idx) => (
+                        <TextField
+                            key={idx}
+                            value={partner}
+                            label={`Playing partner #${idx + 1}`}
+                            variant="standard"
+                            size="small"
+                            onChange={(e) => updatePartnerAt(idx, e.target.value)}
+                        />
+                    ))}
+                    <button onClick={() => setPlayingPartners([...displayedPartners, ""])}>+ Add partner</button>
+                </div>
+            }
+
             {/* Render separate tables for F9/B9 */}
             <Table style={{ maxWidth: "80vw" }} className="scorecardTable marginBottomMassive">
                 <TableHead className="">
@@ -194,7 +263,10 @@ const ScorecardEntry = (props) => {
                 <div className="flexColumn alignCenter">
                     <div className="width100Percent justifyCenter">
                         <button onClick={() => setDisplayHelpModal(true)} className="marginRightMedium">Help</button>
-                        <button onClick={() => validateScorecard(editingExistingScorecard)}>{editingExistingScorecard ? "Update Scorecard" : "Submit"}</button>
+                        <button onClick={() => validateScorecard(editingExistingScorecard)} className={editingExistingScorecard ? "marginRightMedium" : ""}>{editingExistingScorecard ? "Update Scorecard" : "Submit"}</button>
+                        {editingExistingScorecard &&
+                            <button onClick={onDeleteScorecard} style={{backgroundColor: "var(--color-flag-red)", color: "white"}}>Delete</button>
+                        }
                     </div>
                 </div>
             }
